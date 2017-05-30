@@ -13,13 +13,10 @@ import           Data.Word
 import           Network.MQTT
 import           System.Environment
 
-addSubscriptions :: Commands -> [Topic] -> IO (TChan (Message PUBLISH))
-addSubscriptions cmds subscriptions = do
-  chan <- newTChanIO
-  let
-    conf = defaultConfig cmds chan
+addSubscriptions :: Config -> Commands -> [Topic] -> IO ()
+addSubscriptions conf cmds subscriptions = do
   subscribe conf $ (,NoConfirm) <$> subscriptions
-  return chan
+  return ()
 
 getTopic :: ByteString -> Topic
 getTopic bs =
@@ -28,8 +25,8 @@ getTopic bs =
     Right 0  -> "drive/controller"
     Right 1  -> "drive/autonomous"
 
-driveSelector :: Commands -> IO (TVar Topic)
-driveSelector cmds = do
+driveSelector :: Config -> Commands -> IO (TVar Topic)
+driveSelector conf cmds = do
   selectedTopic <- newTVarIO "drive/controller"
   selectedTopicChan <- newTChanIO
   -- Start a thread to constantly
@@ -40,8 +37,6 @@ driveSelector cmds = do
     let
       t = getTopic . payload $ body msg
     writeTVar selectedTopic t
-  let
-    conf = defaultConfig cmds selectedTopicChan
   subscribe conf [("drive_switch", Handshake)]
   return selectedTopic
 
@@ -50,20 +45,24 @@ startDriveMux mqttHost = do
   putStrLn "Making commands"
   cmds <- mkCommands
   putStrLn "Making dummy channel"
-  stupidChan <- newTChanIO
-  putStrLn "Adding subscriptions"
-  chan <- addSubscriptions cmds ["drive/controller", "drive/autonomous"]
-  putStrLn "starting drive selector"
-  selectedTopic <- driveSelector cmds
+  pubChan <- newTChanIO
   let
-    conf = (defaultConfig cmds stupidChan) { cHost = mqttHost }
+    conf = (defaultConfig cmds pubChan) { cHost = mqttHost }
+  _ <- forkIO $ forever $ run conf
+  putStrLn "Adding subscriptions"
+  addSubscriptions conf cmds ["drive/controller", "drive/autonomous"]
+  putStrLn "starting drive selector"
+  selectedTopic <- driveSelector conf cmds
+
   putStrLn "Starting async"
   async $ forever $ do
     (msg, top) <- atomically $ do
-      m <- readTChan chan
+      m <- readTChan pubChan
       t <- readTVar selectedTopic
       return (m,t)
+    print ("Received: ", payload $ body msg, topic (body msg))
     when (topic (body msg) `matches` top) $ do
+      print ("Publishing: ", payload $ body msg)
       publish conf NoConfirm False "drive" $ payload $ body msg
   return ()
 
