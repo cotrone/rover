@@ -34,8 +34,9 @@ import           SwiftNav.SBP
 import           System.Environment
 import           System.IO
 
-getGPSOption :: SBPMsg -> Maybe MsgPosLlh
-getGPSOption (SBPMsgPosLlh m _) = Just m
+getGPSOption :: SBPMsg -> Maybe (Either MsgImuRaw MsgPosLlh)
+getGPSOption (SBPMsgPosLlh m _) = Just $ Right m
+getGPSOption (SBPMsgImuRaw m _) = Just $ Left m
 getGPSOption _                  = Nothing
 
 publishLlh :: Config -> MsgPosLlh -> IO ()
@@ -45,6 +46,19 @@ publishLlh conf msg = do
     put $ msg ^. msgPosLlh_lat
     put $ msg ^. msgPosLlh_height
     put $ msg ^. msgPosLlh_n_sats
+
+publishImu :: Config -> MsgImuRaw -> IO ()
+publishImu conf msg = do
+  publish conf NoConfirm False "orientation" $ runPut $ do
+    put $ roll
+    put $ pitch
+  where
+    roll = (atan2 y z) * 180 / pi
+    pitch = (atan2 (negate x) (sqrt (y*y + z*z))) * 180 / pi
+    x,y,z :: Double
+    x = fromIntegral $ _msgImuRaw_acc_x msg
+    y = fromIntegral $ _msgImuRaw_acc_y msg
+    z = fromIntegral $ _msgImuRaw_acc_z msg
 
 gpsWill :: Will
 gpsWill =
@@ -75,4 +89,4 @@ main = do
       conduitDecode     =$=
       CL.map getGPSOption =$=
       CL.catMaybes $$
-      CL.mapM_ (publishLlh conf)
+      CL.mapM_ (either (publishImu conf) (publishLlh conf))
