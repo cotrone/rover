@@ -7,10 +7,12 @@ import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Monad
-import           Data.ByteString hiding (putStrLn)
+import           Data.ByteString          hiding (putStrLn)
 import qualified Data.Serialize           as S
 import           Data.Word
 import           Network.MQTT
+import           Network.Multicast
+import           Network.Socket.ByteString
 import           System.Environment
 
 addSubscriptions :: Config -> Commands -> [Topic] -> IO ()
@@ -42,6 +44,9 @@ driveSelector conf cmds = do
 
 startDriveMux :: String -> IO ()
 startDriveMux mqttHost = do
+  (sock, addr) <- multicastSender "224.0.0.99" 9999
+  let
+    broadcast v = sendTo sock v addr
   putStrLn "Making commands"
   cmds <- mkCommands
   putStrLn "Making dummy channel"
@@ -63,6 +68,7 @@ startDriveMux mqttHost = do
     print ("Received: ", payload $ body msg, topic (body msg))
     when (topic (body msg) `matches` top) $ do
       print ("Publishing: ", payload $ body msg)
+      broadcast $ payload $ body msg
       publish conf NoConfirm False "drive" $ payload $ body msg
   return ()
 

@@ -33,6 +33,8 @@ Library
                   , stm
                   , bytestring
                   , cereal
+                  , network-multicast
+                  , network
   Exposed-modules: Navigation
                    I2C
                    Drive
